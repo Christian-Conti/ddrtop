@@ -2,27 +2,22 @@
 
 `ddrtop` is an `htop`-like terminal monitor for real-time DDR bandwidth on **AMD/Xilinx Zynq UltraScale+ MPSoC** devices.
 
-It directly accesses the PS **APMDDR (AXI Performance Monitor for DDR)** registers through `/dev/mem` and displays per-port read/write bandwidth using an interactive `curses` interface.
+It directly accesses the PS **APMDDR (AXI Performance Monitor for DDR)** registers through `/dev/mem` and displays per-port read/write bandwidth using a `curses` interface.
 
 ## Features
 
-- Real-time DDR bandwidth monitoring
-- Per-port **read**, **write**, and **total** bandwidth
-- Monitors all six DDR slave ports
-- Simultaneous read/write measurement for every sampled port
-- Time-multiplexed sampling across DDR ports
-- Counter-delta based measurements without resetting counters at every sample
+- Real-time per-port read/write DDR bandwidth
+- Monitoring of all six APMDDR slave ports
+- Simultaneous RD/WR measurement for sampled ports
+- Time-multiplexed sampling across ports
+- Counter-delta measurements with 32-bit wrap handling
 - Coherent 64-bit GCCR reads
-- Estimated APM clock frequency
-- Stacked terminal bars for read/write traffic
-- Automatic bandwidth scale
-- Optional DDR peak bandwidth and utilization display
+- Automatic or fixed bandwidth scale
+- Optional DDR peak utilization
 - Configurable sampling interval
 - No external Python packages required
 
-## Supported DDR Ports
-
-`ddrtop` monitors the six APMDDR slave slots:
+## DDR Ports
 
 | Port | Source |
 |---:|---|
@@ -33,77 +28,37 @@ It directly accesses the PS **APMDDR (AXI Performance Monitor for DDR)** registe
 | 4 | HP1/2 |
 | 5 | HP3/DMA |
 
-The displayed names correspond to the APMDDR slot mapping used by the script.
-
 ## How It Works
 
-The Zynq UltraScale+ APMDDR exposes **10 metric counters**.
+APMDDR provides **10 metric counters**. Since each port requires one counter for reads and one for writes, at most **five ports can be monitored simultaneously**.
 
-To measure both read and write bandwidth for a port, `ddrtop` assigns two counters:
+`ddrtop` therefore rotates the omitted port between sampling windows while always measuring RD and WR traffic for a given port in the same window.
 
-```text
-Port N
- ├── WR_BYTE_CNT
- └── RD_BYTE_CNT
-```
-
-This means that at most **five DDR ports can be measured simultaneously**.
-
-To cover all six ports, `ddrtop` rotates the omitted port between sampling windows:
-
-```text
-Window 0: ports 1 2 3 4 5
-Window 1: ports 0 2 3 4 5
-Window 2: ports 0 1 3 4 5
-...
-```
-
-Read and write counters for a given port are always measured during the **same sampling window**.
-
-### Exact vs. Cached Bandwidth
-
-The interface reports two aggregate values:
+The interface reports:
 
 ```text
 WINDOW exact
 ALL~ cached
 ```
 
-`WINDOW exact` is the exact sum of the five ports sampled during the current measurement window.
+- `WINDOW exact`: exact, temporally coherent sum of the five ports sampled in the current window.
+- `ALL~ cached`: estimated total across all six ports, using the previous measurement for the currently omitted port.
 
-`ALL~ cached` includes all six ports, but one port contains the value obtained during its previous sampling window.
-
-Therefore:
-
-```text
-WINDOW exact = temporally coherent measurement of 5 ports
-ALL~ cached  = estimate of the total traffic across all 6 ports
-```
-
-The age displayed next to each port indicates how recently that value was measured.
+The reported `AGE` indicates how recently each port was measured.
 
 ## Requirements
 
-- AMD/Xilinx **Zynq UltraScale+ MPSoC**
+- Zynq UltraScale+ MPSoC
 - Linux
 - Python 3
-- Access to `/dev/mem`
+- `/dev/mem` access
 - Root privileges
-- Terminal with `curses` support
-
-No additional Python modules are required.
+- `curses` terminal support
 
 ## Usage
 
-Make the script executable:
-
 ```bash
 chmod +x ddrtop.py
-```
-
-Run it as root:
-
-```bash
 sudo ./ddrtop.py
 ```
 
@@ -113,162 +68,50 @@ or:
 sudo python3 ddrtop.py
 ```
 
-Press:
+Press `q` to exit.
 
-```text
-q
-```
-
-to exit.
-
-## Command-Line Options
+### Options
 
 ```bash
 sudo ./ddrtop.py --help
 ```
 
-Available options:
+Main options:
 
 ```text
---base ADDRESS
-```
-
-APMDDR base address.
-
-Default:
-
-```text
-0xFD0B0000
+--base ADDRESS          APMDDR base address (default: 0xFD0B0000)
+--interval SECONDS      Sampling interval (default: 0.10)
+--ddr-peak-gbps GBPS    Peak DDR bandwidth used for scaling/utilization
 ```
 
 Example:
 
 ```bash
-sudo ./ddrtop.py --base 0xFD0B0000
+sudo ./ddrtop.py --interval 0.1 --ddr-peak-gbps 10.28
 ```
 
----
-
-```text
---interval SECONDS
-```
-
-Sampling interval in seconds.
-
-Default:
-
-```text
-0.10
-```
-
-Example:
-
-```bash
-sudo ./ddrtop.py --interval 0.25
-```
-
----
-
-```text
---ddr-peak-gbps GBPS
-```
-
-Specify the peak DDR bandwidth in GB/s.
-
-When this option is provided, `ddrtop` uses the value as the fixed scale for the bandwidth bars and displays estimated DDR utilization.
-
-Example:
-
-```bash
-sudo ./ddrtop.py --ddr-peak-gbps 10.28
-```
-
-Without this option, the bandwidth bars automatically scale according to the observed traffic.
-
-## Example
-
-```bash
-sudo ./ddrtop.py \
-    --interval 0.1 \
-    --ddr-peak-gbps 10.28
-```
-
-The interface reports information similar to:
-
-```text
-ddrtop | APMDDR 0xFD0B0000 | dt=100.1ms | t=12.4s | window=[0,1,2,3,4] missing=5
-
-WINDOW exact  RD   3.42 GB/s   WR   1.18 GB/s   SUM   4.60 GB/s
-ALL~ cached   RD   3.55 GB/s   WR   1.24 GB/s   SUM   4.79 GB/s
-
-Peak=10.280 GB/s  Util~=46.6%
-
-PORT  SOURCE    READ           WRITE          TOTAL          AGE
-   0  RPU         ...
-   1  CCI-0       ...
-   2  CCI-1       ...
-   3  HP0/DP      ...
-   4  HP1/2       ...
-   5  HP3/DMA     ...
-```
-
-Read traffic is shown in **green**, while write traffic is shown in **cyan**.
+Without `--ddr-peak-gbps`, the bandwidth bars automatically scale to the observed traffic.
 
 ## Counter Handling
 
-`ddrtop` does not reset the APM metric counters after each sample.
+`ddrtop` computes bandwidth from counter deltas instead of resetting the metric counters after every sample.
 
-Instead, it:
+For each window it:
 
-1. stops metric counting;
-2. programs the metric selectors;
-3. reads the initial counter values;
-4. starts counting;
-5. waits for the configured sampling interval;
-6. stops counting;
-7. reads the final values;
-8. computes modular counter deltas.
+1. programs the metric selectors;
+2. reads the initial counters;
+3. measures traffic for the configured interval;
+4. reads the final counters;
+5. computes the counter deltas.
 
-This approach avoids continuously resetting the hardware counters and correctly handles 32-bit counter wrap-around.
+32-bit byte-counter wrap-around is handled automatically.
 
-The GCCR counter is read using an **H-L-H** sequence to avoid torn 64-bit reads when the lower half rolls over between register accesses.
+The 64-bit GCCR counter is read using an **H-L-H** sequence to avoid inconsistent values during rollover.
 
-## Counter Overflow
-
-Metric byte counters are 32-bit.
-
-When `--ddr-peak-gbps` is provided, `ddrtop` checks whether the requested sampling interval could approach a 32-bit byte-counter wrap at the specified bandwidth.
-
-If the interval is unsafe, the program exits and requests a shorter sampling interval.
-
-For high-bandwidth systems, a relatively short interval such as:
-
-```bash
---interval 0.1
-```
-
-is recommended.
-
-## Permissions
-
-`ddrtop` accesses physical memory directly using:
-
-```text
-/dev/mem
-```
-
-and therefore normally requires root privileges:
-
-```bash
-sudo ./ddrtop.py
-```
-
-If the program is executed without sufficient permissions, it will terminate with an error.
+When `--ddr-peak-gbps` is specified, `ddrtop` also checks that the sampling interval is short enough to avoid ambiguous 32-bit counter overflow.
 
 ## Notes
 
-`ddrtop` is intended for low-level performance analysis of DDR traffic on Zynq UltraScale+ MPSoC platforms.
+Because APMDDR has only ten metric counters, all six ports cannot be measured with simultaneous RD/WR counters in the same sampling interval.
 
-Because APMDDR provides only ten metric counters, the six DDR ports cannot all be measured with simultaneous RD/WR counters during the same sampling interval. The `ALL~ cached` value should therefore be interpreted as an estimate when traffic changes significantly between adjacent sampling windows.
-
-For temporally coherent measurements, use the `WINDOW exact` value.
+Use `WINDOW exact` when temporal coherence is important. `ALL~ cached` provides an estimate of total DDR traffic across all six ports.
